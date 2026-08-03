@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, render_template
 import sqlite3
 import os
 from werkzeug.utils import secure_filename
@@ -51,7 +51,7 @@ def init_db():
 
 @app.route('/')
 def home():
-    return "Welcome to the Personal Information Management System!"
+    return render_template('home.html')
 
 # Create a new inventory item
 @app.route('/inventory', methods=['POST'])

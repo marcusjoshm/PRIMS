@@ -101,3 +101,5 @@ Desktop.ini
 
 # Conversation history
 docs/AI_assistent_conversation.md 
+# Compound Engineering machine-local config
+.compound-engineering/*.local.yaml

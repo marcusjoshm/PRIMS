@@ -55,6 +55,25 @@ def category_page(category_id):
     )
 
 
+@app.route('/search')
+def search():
+    """One box over every collection, matching item name and notes (R8/F2).
+
+    A plain GET form submission (KTD1): no q, or a blank one, renders a prompt
+    rather than an error. Each hit carries its category path so the answer to
+    "do I already own this?" names the collection it lives in.
+    """
+    query = request.args.get('q', '').strip()
+    results = []
+    for row in db.search_items(query):
+        ancestors = db.get_ancestors(row['category_id']) if row['category_id'] else []
+        results.append({
+            'row': row,
+            'path': ' / '.join(crumb['name'] for crumb in ancestors),
+        })
+    return render_template('search.html', query=query, results=results)
+
+
 @app.route('/item/<int:item_id>')
 def item_page(item_id):
     """One item: name, quantity, notes and location."""

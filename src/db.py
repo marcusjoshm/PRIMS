@@ -308,16 +308,23 @@ def delete_item(item_id):
 
 def search_items(query):
     """Find items whose name or notes match the query (case-insensitive), across
-    all collections. Empty query returns nothing."""
+    all collections. Empty query returns nothing.
+
+    ``%`` and ``_`` are LIKE wildcards, but someone typing "100%" or "a_b" into
+    the search box means those characters literally, so they are escaped (along
+    with the backslash that escapes them) rather than passed through.
+    """
     query = (query or "").strip()
     if not query:
         return []
-    like = f"%{query}%"
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    like = f"%{escaped}%"
     conn = get_conn()
     try:
         return conn.execute(
-            "SELECT * FROM inventory WHERE name LIKE ? COLLATE NOCASE "
-            "OR notes LIKE ? COLLATE NOCASE ORDER BY name",
+            "SELECT * FROM inventory "
+            "WHERE name COLLATE NOCASE LIKE ? ESCAPE '\\' "
+            "OR notes COLLATE NOCASE LIKE ? ESCAPE '\\' ORDER BY name",
             (like, like),
         ).fetchall()
     finally:

@@ -4,7 +4,13 @@ Covers R10 (add an item, choosing an existing category or creating one
 inline, with name/quantity/notes/location), R11/AE3 (edit an item including
 its quantity), R12 (delete an item), R3/AE4 (attach an item directly to a
 top-level collection) and flow F3 (add after shopping).
+
+The form routes are CSRF-protected, so every POST here goes through
+``post_form``, which fetches a form and submits the hidden token with it --
+what a browser does. Rejection of a *missing* token is covered in
+tests/test_csrf.py.
 """
+from conftest import post_form
 
 
 def _db():
@@ -76,7 +82,8 @@ def test_add_item_with_an_existing_category_persists_and_appears_under_it(client
     db = _db()
     _, glassware = _kitchen_tree()
 
-    resp = client.post(
+    resp = post_form(
+        client,
         "/item/new",
         data={
             "name": "Wine glass",
@@ -103,7 +110,8 @@ def test_add_item_creating_a_category_inline_creates_both(client):
     db = _db()
     kitchen, _ = _kitchen_tree()
 
-    client.post(
+    post_form(
+        client,
         "/item/new",
         data={
             "name": "Stock pot",
@@ -126,7 +134,8 @@ def test_add_item_creating_a_top_level_category_inline(client):
     # No parent chosen plus an inline name means a new top-level collection.
     db = _db()
 
-    client.post(
+    post_form(
+        client,
         "/item/new",
         data={"name": "Tent", "category_id": "", "new_category": "Camping"},
         follow_redirects=True,
@@ -143,7 +152,8 @@ def test_add_book_attached_directly_to_library_saves_at_top_level(client):
     library = db.create_category("Library")
     db.create_category("Records", parent_id=library)
 
-    client.post(
+    post_form(
+        client,
         "/item/new",
         data={"name": "Dune", "category_id": str(library), "quantity": "1"},
         follow_redirects=True,
@@ -156,7 +166,8 @@ def test_add_item_defaults_quantity_and_notes_when_left_blank(client):
     db = _db()
     kitchen, _ = _kitchen_tree()
 
-    client.post(
+    post_form(
+        client,
         "/item/new",
         data={"name": "Whisk", "category_id": str(kitchen), "quantity": "", "notes": ""},
         follow_redirects=True,
@@ -174,7 +185,8 @@ def test_add_without_a_name_returns_a_validation_error_not_a_crash(client):
     db = _db()
     kitchen, _ = _kitchen_tree()
 
-    resp = client.post(
+    resp = post_form(
+        client,
         "/item/new", data={"name": "  ", "category_id": str(kitchen), "quantity": "2"}
     )
     body = _html(resp)
@@ -189,7 +201,8 @@ def test_add_with_a_non_numeric_quantity_returns_a_validation_error(client):
     db = _db()
     kitchen, _ = _kitchen_tree()
 
-    resp = client.post(
+    resp = post_form(
+        client,
         "/item/new",
         data={"name": "Mug", "category_id": str(kitchen), "quantity": "lots"},
     )
@@ -202,7 +215,8 @@ def test_add_with_a_negative_quantity_returns_a_validation_error(client):
     db = _db()
     kitchen, _ = _kitchen_tree()
 
-    resp = client.post(
+    resp = post_form(
+        client,
         "/item/new",
         data={"name": "Mug", "category_id": str(kitchen), "quantity": "-3"},
     )
@@ -214,7 +228,8 @@ def test_add_with_an_unknown_category_is_rejected_not_a_500(client):
     # PRAGMA foreign_keys = ON would otherwise raise IntegrityError -> 500.
     db = _db()
 
-    resp = client.post(
+    resp = post_form(
+        client,
         "/item/new", data={"name": "Mug", "category_id": "999", "quantity": "1"}
     )
     assert resp.status_code == 400
@@ -226,7 +241,8 @@ def test_add_with_a_duplicate_inline_category_name_shows_the_error(client):
     db = _db()
     kitchen, _ = _kitchen_tree()
 
-    resp = client.post(
+    resp = post_form(
+        client,
         "/item/new",
         data={
             "name": "Tumbler",
@@ -270,7 +286,8 @@ def test_editing_the_quantity_from_six_to_five_persists_five(client):
     item = _pint_glasses_with_quantity_six()
     before = db.get_item(item)
 
-    resp = client.post(
+    resp = post_form(
+        client,
         f"/item/{item}/edit",
         data={
             "name": before["name"],
@@ -293,7 +310,8 @@ def test_editing_can_change_name_notes_location_and_category(client):
     kitchen, glassware = _kitchen_tree()
     item = db.create_item("Pint glass", category_id=glassware, quantity=6)
 
-    client.post(
+    post_form(
+        client,
         f"/item/{item}/edit",
         data={
             "name": "Pint glasses",
@@ -316,7 +334,8 @@ def test_editing_to_a_blank_name_returns_a_validation_error(client):
     db = _db()
     item = _pint_glasses_with_quantity_six()
 
-    resp = client.post(
+    resp = post_form(
+        client,
         f"/item/{item}/edit",
         data={"name": "", "category_id": "", "quantity": "5"},
     )
@@ -330,7 +349,8 @@ def test_editing_with_a_bad_quantity_leaves_the_item_untouched(client):
     item = _pint_glasses_with_quantity_six()
     before = db.get_item(item)
 
-    resp = client.post(
+    resp = post_form(
+        client,
         f"/item/{item}/edit",
         data={
             "name": before["name"],
@@ -344,7 +364,7 @@ def test_editing_with_a_bad_quantity_leaves_the_item_untouched(client):
 
 def test_edit_form_for_an_unknown_item_returns_404(client):
     assert client.get("/item/999/edit").status_code == 404
-    assert client.post("/item/999/edit", data={"name": "x"}).status_code == 404
+    assert post_form(client, "/item/999/edit", data={"name": "x"}).status_code == 404
 
 
 # --- Deleting (R12) --------------------------------------------------------
@@ -355,7 +375,7 @@ def test_deleting_removes_the_item_from_browse_and_search(client):
     _, glassware = _kitchen_tree()
     item = db.create_item("Pint glass", category_id=glassware, quantity=6, notes="chipped")
 
-    resp = client.post(f"/item/{item}/delete", follow_redirects=True)
+    resp = post_form(client, f"/item/{item}/delete", follow_redirects=True)
     assert resp.status_code == 200
 
     assert db.get_item(item) is None
@@ -370,13 +390,13 @@ def test_deleting_returns_to_the_items_category(client):
     _, glassware = _kitchen_tree()
     item = db.create_item("Pint glass", category_id=glassware)
 
-    resp = client.post(f"/item/{item}/delete")
+    resp = post_form(client, f"/item/{item}/delete")
     assert resp.status_code == 302
     assert resp.headers["Location"].endswith(f"/category/{glassware}")
 
 
 def test_deleting_an_unknown_item_returns_404(client):
-    assert client.post("/item/999/delete").status_code == 404
+    assert post_form(client, "/item/999/delete").status_code == 404
 
 
 def test_get_on_the_delete_route_is_not_allowed(client):
@@ -397,7 +417,8 @@ def test_add_then_edit_quantity_then_delete_round_trip(client):
     kitchen, _ = _kitchen_tree()
 
     assert "/item/new" in _html(client.get("/"))
-    client.post(
+    post_form(
+        client,
         "/item/new",
         data={
             "name": "Pint glass",
@@ -412,7 +433,8 @@ def test_add_then_edit_quantity_then_delete_round_trip(client):
     item = db.get_items_in_category(barware)[0]["id"]
 
     assert f"/item/{item}/edit" in _html(client.get(f"/item/{item}"))
-    client.post(
+    post_form(
+        client,
         f"/item/{item}/edit",
         data={
             "name": "Pint glass",
@@ -424,7 +446,7 @@ def test_add_then_edit_quantity_then_delete_round_trip(client):
     )
     assert db.get_item(item)["quantity"] == 5
 
-    client.post(f"/item/{item}/delete", follow_redirects=True)
+    post_form(client, f"/item/{item}/delete", follow_redirects=True)
     assert db.get_item(item) is None
 
 

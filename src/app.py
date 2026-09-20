@@ -1,14 +1,21 @@
 from flask import (
     Flask, request, jsonify, send_from_directory, render_template,
-    redirect, url_for, flash, abort,
+    redirect, url_for, flash, abort, session,
 )
+import hmac
 import os
+import secrets
 from werkzeug.utils import secure_filename
 
 import db
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('PRIMS_SECRET_KEY', 'dev-secret-change-me')
+# A generated key means flash messages and CSRF tokens do not outlive a
+# restart, which is fine for a local single-user app. Set PRIMS_SECRET_KEY to
+# keep them across restarts; never ship a committed, guessable default, since
+# a known key makes the signed session cookie -- and the CSRF token in it --
+# forgeable.
+app.config['SECRET_KEY'] = os.environ.get('PRIMS_SECRET_KEY') or secrets.token_hex(32)
 
 # Configure upload folder
 UPLOAD_FOLDER = 'uploads'
@@ -20,6 +27,47 @@ ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+# ---------------------------------------------------------------------------
+# CSRF protection for the browser-facing forms
+# ---------------------------------------------------------------------------
+
+# Only the page routes that change state. The JSON API (/inventory,
+# /categories, /locations, /upload, /files/...) is deliberately absent: it is a
+# scriptable local API driven by curl with no cookies and no session, so a
+# token requirement would break it (KTD5, tests/test_crud_operations.sh).
+CSRF_PROTECTED_ENDPOINTS = frozenset({'new_item', 'edit_item', 'remove_item'})
+
+
+def csrf_token():
+    """The session's CSRF token, minted lazily on first use.
+
+    The app has no login, so there is no session to steal -- which is exactly
+    why a forged cross-site POST would otherwise work. A secret that only a
+    page served by this app can read is the thing standing in the way.
+    """
+    token = session.get('csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['csrf_token'] = token
+    return token
+
+
+# Every form template emits the hidden field with {{ csrf_token() }}.
+app.jinja_env.globals['csrf_token'] = csrf_token
+
+
+@app.before_request
+def require_csrf_token():
+    """Reject state-changing page POSTs that do not carry the session token."""
+    if request.method != 'POST' or request.endpoint not in CSRF_PROTECTED_ENDPOINTS:
+        return None
+    expected = session.get('csrf_token')
+    submitted = request.form.get('csrf_token', '')
+    if not expected or not hmac.compare_digest(str(expected), submitted):
+        abort(400, description='Invalid or missing CSRF token. Reload the page and try again.')
+    return None
 
 
 # ---------------------------------------------------------------------------

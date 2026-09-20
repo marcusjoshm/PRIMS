@@ -45,9 +45,22 @@ To run the application locally, follow these steps:
 > database already holds items; pass `--force` to skip the prompt. Point it at
 > a different file with `PRIMS_DB=/tmp/demo.db python src/seed.py`.
 
+The forms are CSRF-protected with a token kept in the signed session cookie,
+which that cookie's secret key signs. Without `PRIMS_SECRET_KEY` the app
+generates a fresh key at startup, so a restart invalidates open forms and
+pending flash messages — harmless for a local single-user app, but set a stable
+one to avoid it:
+
+```bash
+PRIMS_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))') python src/app.py
+```
+
+Keep that value private and out of the repository: anyone who knows it can
+forge the session cookie.
+
 ## Running the tests
 ```bash
-python -m pytest tests/          # 91 unit and page tests
+python -m pytest tests/          # full unit, page and regression suite
 bash tests/test_crud_operations.sh   # curl smoke test, needs the app running
 ```
 

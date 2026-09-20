@@ -13,7 +13,10 @@
     {% endfor %}
   </nav>
 
-  <h1>{{ category['name'] }}</h1>
+  <div class="page-heading">
+    <h1>{{ category['name'] }}</h1>
+    <a class="btn" href="{{ url_for('new_item', category_id=category['id']) }}">Add item</a>
+  </div>
 
   {% if subcategories %}
     <section id="subcategories">

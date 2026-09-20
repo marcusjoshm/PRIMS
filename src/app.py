@@ -92,6 +92,170 @@ def item_page(item_id):
 
 
 # ---------------------------------------------------------------------------
+# Item add / edit / delete (U5)
+# ---------------------------------------------------------------------------
+
+BLANK_ITEM_FORM = {
+    'name': '',
+    'category_id': '',
+    'new_category': '',
+    'quantity': '',
+    'notes': '',
+    'location': '',
+}
+
+
+def _category_choices():
+    """Every category, depth-first, each label indented by its depth.
+
+    Per R3/KD2 an item may hang off any level of the tree, so the picker
+    offers every category rather than only the leaves.
+    """
+    children = {}
+    for row in db.get_all_categories():
+        children.setdefault(row['parent_id'], []).append(row)
+
+    choices = []
+
+    def walk(parent_id, depth):
+        for row in children.get(parent_id, []):
+            choices.append({
+                'id': row['id'],
+                'label': '   ' * depth + row['name'],
+            })
+            walk(row['id'], depth + 1)
+
+    walk(None, 0)
+    return choices
+
+
+def _submitted_item_form():
+    """The raw, stripped form values, kept so a rejected form can be re-rendered."""
+    return {key: request.form.get(key, '').strip() for key in BLANK_ITEM_FORM}
+
+
+def _resolve_item_form(values):
+    """Turn submitted strings into db arguments, or return a message to show.
+
+    Returns ``(fields, error)`` with exactly one of them set. Everything that
+    can be rejected is checked before the inline category is created, so a
+    form that fails validation leaves no half-made category behind. A category
+    id that no longer exists is caught here rather than surfacing as the
+    sqlite3.IntegrityError that PRAGMA foreign_keys would otherwise raise.
+    """
+    if not values['name']:
+        return None, 'Item name is required.'
+
+    try:
+        quantity = int(values['quantity'] or 0)
+    except ValueError:
+        return None, 'Quantity must be a whole number.'
+    if quantity < 0:
+        return None, 'Quantity cannot be negative.'
+
+    parent_id = None
+    if values['category_id']:
+        try:
+            parent_id = int(values['category_id'])
+        except ValueError:
+            return None, 'Choose a category from the list.'
+        if db.get_category(parent_id) is None:
+            return None, 'That category no longer exists — choose another.'
+
+    category_id = parent_id
+    if values['new_category']:
+        try:
+            category_id = db.create_category(values['new_category'], parent_id)
+        except ValueError as exc:
+            return None, str(exc)
+
+    return {
+        'name': values['name'],
+        'category_id': category_id,
+        'location_id': db.get_or_create_location(values['location']),
+        'quantity': quantity,
+        'notes': values['notes'],
+    }, None
+
+
+def _render_item_form(values, heading, action, submit_label, status=200):
+    return render_template(
+        'item_form.html',
+        values=values,
+        categories=_category_choices(),
+        heading=heading,
+        action=action,
+        submit_label=submit_label,
+    ), status
+
+
+@app.route('/item/new', methods=['GET', 'POST'])
+def new_item():
+    """Add an item, picking a category or creating one inline (R10/AE4, F3)."""
+    if request.method == 'POST':
+        values = _submitted_item_form()
+        fields, error = _resolve_item_form(values)
+        if error:
+            flash(error)
+            return _render_item_form(
+                values, 'Add item', url_for('new_item'), 'Save item', status=400
+            )
+        item_id = db.create_item(**fields)
+        flash(f"Added {fields['name']}.")
+        return redirect(url_for('item_page', item_id=item_id))
+
+    values = dict(BLANK_ITEM_FORM)
+    # Adding from a category page starts with that category already chosen.
+    values['category_id'] = request.args.get('category_id', '')
+    return _render_item_form(values, 'Add item', url_for('new_item'), 'Save item')
+
+
+@app.route('/item/<int:item_id>/edit', methods=['GET', 'POST'])
+def edit_item(item_id):
+    """Edit an item, including its quantity (R11/AE3)."""
+    item = db.get_item(item_id)
+    if item is None:
+        abort(404)
+    action = url_for('edit_item', item_id=item_id)
+
+    if request.method == 'POST':
+        values = _submitted_item_form()
+        fields, error = _resolve_item_form(values)
+        if error:
+            flash(error)
+            return _render_item_form(
+                values, 'Edit item', action, 'Save changes', status=400
+            )
+        db.update_item(item_id, **fields)
+        flash(f"Saved {fields['name']}.")
+        return redirect(url_for('item_page', item_id=item_id))
+
+    location = db.get_location(item['location_id'])
+    values = dict(
+        BLANK_ITEM_FORM,
+        name=item['name'],
+        category_id='' if item['category_id'] is None else str(item['category_id']),
+        quantity='' if item['quantity'] is None else str(item['quantity']),
+        notes=item['notes'] or '',
+        location=location['name'] if location else '',
+    )
+    return _render_item_form(values, 'Edit item', action, 'Save changes')
+
+
+@app.route('/item/<int:item_id>/delete', methods=['POST'])
+def remove_item(item_id):
+    """Delete an item (R12). POST only; the page guards it with a confirm()."""
+    item = db.get_item(item_id)
+    if item is None:
+        abort(404)
+    db.delete_item(item_id)
+    flash(f"Deleted {item['name']}.")
+    if item['category_id'] and db.get_category(item['category_id']):
+        return redirect(url_for('category_page', category_id=item['category_id']))
+    return redirect(url_for('home'))
+
+
+# ---------------------------------------------------------------------------
 # JSON API (existing endpoints, now backed by the shared data layer in db.py)
 # ---------------------------------------------------------------------------
 

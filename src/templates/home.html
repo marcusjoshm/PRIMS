@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}PRIMS{% endblock %}
 {% block content %}
-  <h1>Collections</h1>
+  <div class="page-heading">
+    <h1>Collections</h1>
+    <a class="btn" href="{{ url_for('new_item') }}">Add item</a>
+  </div>
 
   {% if collections %}
     <ul class="tiles">

@@ -30,10 +30,9 @@
     <dd>{% if item['notes'] %}{{ item['notes'] }}{% else %}<span class="empty-state">No notes</span>{% endif %}</dd>
   </dl>
 
-  {# The edit/delete routes land in U5; paths are hardcoded so this page renders now. #}
   <div class="detail-actions">
-    <a class="btn btn-secondary" href="/item/{{ item['id'] }}/edit">Edit</a>
-    <form action="/item/{{ item['id'] }}/delete" method="post"
+    <a class="btn btn-secondary" href="{{ url_for('edit_item', item_id=item['id']) }}">Edit</a>
+    <form action="{{ url_for('remove_item', item_id=item['id']) }}" method="post"
           onsubmit="return confirm('Delete this item?');">
       <button class="btn btn-danger" type="submit">Delete</button>
     </form>

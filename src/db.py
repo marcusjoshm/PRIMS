@@ -7,8 +7,8 @@ the seed script share one implementation (KTD5). Rows come back as
 Schema (KTD2/KTD3/KTD4):
   categories  id, name, parent_id -> categories.id (NULL = top-level collection)
               UNIQUE(parent_id, name); top-level NULL-parent uniqueness is
-              enforced in create_category() because SQLite treats NULLs as
-              distinct in a UNIQUE constraint.
+              enforced in create_category()/update_category() because SQLite
+              treats NULLs as distinct in a UNIQUE constraint.
   locations   id, name UNIQUE
   inventory   id, name, category_id, location_id, quantity, notes
 """
@@ -17,6 +17,12 @@ import sqlite3
 
 # Resolved at call time so tests can point DB_PATH at a throwaway file.
 DB_PATH = os.environ.get("PRIMS_DB", "prims.db")
+
+# How far the recursive category walks will follow parent/child links. Real
+# nesting is a handful of levels deep; the bound exists so a cyclic row (a
+# category that is its own ancestor) degrades into a truncated tree instead of
+# spinning forever and hanging every page that touches that subtree.
+MAX_TREE_DEPTH = 100
 
 
 def get_conn():
@@ -82,6 +88,12 @@ def create_category(name, parent_id=None):
 
     The DB constraint covers non-NULL parents; the top-level (NULL parent)
     case is checked here because SQLite treats NULLs as distinct.
+
+    The parent is looked up first so an unknown parent_id reports itself
+    instead of arriving as a foreign-key IntegrityError that would be
+    misreported as a duplicate name. It also rules out a self-parented row:
+    the id the INSERT is about to take cannot already exist, and a category
+    that is its own parent makes the recursive CTEs below loop forever.
     """
     name = (name or "").strip()
     if not name:
@@ -95,6 +107,12 @@ def create_category(name, parent_id=None):
             ).fetchone()
             if existing:
                 raise ValueError(f"A top-level category named '{name}' already exists")
+        else:
+            parent = conn.execute(
+                "SELECT 1 FROM categories WHERE id = ?", (parent_id,)
+            ).fetchone()
+            if parent is None:
+                raise ValueError(f"No category with id {parent_id}")
         try:
             cur = conn.execute(
                 "INSERT INTO categories (name, parent_id) VALUES (?, ?)",
@@ -151,17 +169,22 @@ def get_all_categories():
 
 
 def descendant_ids(category_id):
-    """Return category_id plus all nested descendant ids (recursive CTE, KTD2)."""
+    """Return category_id plus all nested descendant ids (recursive CTE, KTD2).
+
+    Bounded by MAX_TREE_DEPTH so a cyclic row cannot hang the caller.
+    """
     conn = get_conn()
     try:
         rows = conn.execute(
-            """
-            WITH RECURSIVE subtree(id) AS (
-                SELECT id FROM categories WHERE id = ?
+            f"""
+            WITH RECURSIVE subtree(id, depth) AS (
+                SELECT id, 0 FROM categories WHERE id = ?
                 UNION ALL
-                SELECT c.id FROM categories c JOIN subtree s ON c.parent_id = s.id
+                SELECT c.id, s.depth + 1 FROM categories c JOIN subtree s
+                ON c.parent_id = s.id
+                WHERE s.depth < {MAX_TREE_DEPTH}
             )
-            SELECT id FROM subtree
+            SELECT DISTINCT id FROM subtree
             """,
             (category_id,),
         ).fetchall()
@@ -175,11 +198,13 @@ def category_item_count(category_id):
     conn = get_conn()
     try:
         row = conn.execute(
-            """
-            WITH RECURSIVE subtree(id) AS (
-                SELECT id FROM categories WHERE id = ?
+            f"""
+            WITH RECURSIVE subtree(id, depth) AS (
+                SELECT id, 0 FROM categories WHERE id = ?
                 UNION ALL
-                SELECT c.id FROM categories c JOIN subtree s ON c.parent_id = s.id
+                SELECT c.id, s.depth + 1 FROM categories c JOIN subtree s
+                ON c.parent_id = s.id
+                WHERE s.depth < {MAX_TREE_DEPTH}
             )
             SELECT COUNT(*) AS n FROM inventory
             WHERE category_id IN (SELECT id FROM subtree)
@@ -201,12 +226,13 @@ def get_ancestors(category_id):
     conn = get_conn()
     try:
         return conn.execute(
-            """
+            f"""
             WITH RECURSIVE chain(id, name, parent_id, depth) AS (
                 SELECT id, name, parent_id, 0 FROM categories WHERE id = ?
                 UNION ALL
                 SELECT c.id, c.name, c.parent_id, chain.depth + 1
                 FROM categories c JOIN chain ON c.id = chain.parent_id
+                WHERE chain.depth < {MAX_TREE_DEPTH}
             )
             SELECT id, name, parent_id FROM chain ORDER BY depth DESC
             """,
@@ -217,14 +243,38 @@ def get_ancestors(category_id):
 
 
 def update_category(category_id, name):
+    """Rename a category, rejecting a name already taken by a sibling.
+
+    The same two checks create_category makes: the NULL-parent case in Python
+    (SQLite treats NULLs as distinct), the rest via UNIQUE(parent_id, name),
+    whose IntegrityError is translated so callers see one correctable error
+    type. Both exclude the row being renamed, so renaming it to its own name
+    is a no-op rather than a conflict.
+    """
     name = (name or "").strip()
     if not name:
         raise ValueError("Category name is required")
     conn = get_conn()
     try:
-        conn.execute(
-            "UPDATE categories SET name = ? WHERE id = ?", (name, category_id)
-        )
+        row = conn.execute(
+            "SELECT parent_id FROM categories WHERE id = ?", (category_id,)
+        ).fetchone()
+        if row is not None and row["parent_id"] is None:
+            existing = conn.execute(
+                "SELECT 1 FROM categories "
+                "WHERE parent_id IS NULL AND name = ? AND id != ?",
+                (name, category_id),
+            ).fetchone()
+            if existing:
+                raise ValueError(f"A top-level category named '{name}' already exists")
+        try:
+            conn.execute(
+                "UPDATE categories SET name = ? WHERE id = ?", (name, category_id)
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(
+                f"A category named '{name}' already exists under this parent"
+            ) from exc
         conn.commit()
     finally:
         conn.close()
@@ -254,11 +304,14 @@ def create_item(name, category_id, location_id=None, quantity=0, notes=""):
         raise ValueError("Item name is required")
     conn = get_conn()
     try:
-        cur = conn.execute(
-            "INSERT INTO inventory (name, category_id, location_id, quantity, notes) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, category_id, location_id, quantity, notes or ""),
-        )
+        try:
+            cur = conn.execute(
+                "INSERT INTO inventory (name, category_id, location_id, quantity, notes) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, category_id, location_id, quantity, notes or ""),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Unknown category or location id") from exc
         conn.commit()
         return cur.lastrowid
     finally:
@@ -300,11 +353,14 @@ def update_item(item_id, name, category_id, location_id, quantity, notes):
         raise ValueError("Item name is required")
     conn = get_conn()
     try:
-        conn.execute(
-            "UPDATE inventory SET name = ?, category_id = ?, location_id = ?, "
-            "quantity = ?, notes = ? WHERE id = ?",
-            (name, category_id, location_id, quantity, notes or "", item_id),
-        )
+        try:
+            conn.execute(
+                "UPDATE inventory SET name = ?, category_id = ?, location_id = ?, "
+                "quantity = ?, notes = ? WHERE id = ?",
+                (name, category_id, location_id, quantity, notes or "", item_id),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Unknown category or location id") from exc
         conn.commit()
     finally:
         conn.close()
@@ -399,7 +455,27 @@ def update_location(location_id, name):
         conn.close()
 
 
+def location_is_empty(location_id):
+    """True when no item points at this location."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM inventory WHERE location_id = ?",
+            (location_id,),
+        ).fetchone()
+        return row["n"] == 0
+    finally:
+        conn.close()
+
+
 def delete_location(location_id):
+    """Delete a location only when no item still references it.
+
+    Mirrors delete_category: the foreign key would refuse the DELETE anyway,
+    so the check turns that into a message the caller can act on.
+    """
+    if not location_is_empty(location_id):
+        raise ValueError("Cannot delete a location that items still reference")
     conn = get_conn()
     try:
         conn.execute("DELETE FROM locations WHERE id = ?", (location_id,))

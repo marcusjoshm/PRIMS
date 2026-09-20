@@ -368,7 +368,10 @@ def update_location(location_id):
 
 @app.route('/locations/<int:location_id>', methods=['DELETE'])
 def delete_location(location_id):
-    db.delete_location(location_id)
+    try:
+        db.delete_location(location_id)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     return jsonify({'message': 'Location deleted successfully'})
 
 

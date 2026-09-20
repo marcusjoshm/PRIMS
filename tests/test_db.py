@@ -105,6 +105,61 @@ def test_update_item_changes_quantity(db_mod):
     assert db_mod.get_item(item_id)["quantity"] == 5
 
 
+def test_get_or_create_category_is_idempotent_under_a_parent(db_mod):
+    # The sibling of get_or_create_location: a name already taken under this
+    # parent resolves to that category instead of raising.
+    kitchen = db_mod.create_category("Kitchen")
+    glassware = db_mod.create_category("Glassware", parent_id=kitchen)
+
+    assert db_mod.get_or_create_category("Glassware", parent_id=kitchen) == glassware
+    assert db_mod.get_or_create_category(" Glassware ", parent_id=kitchen) == glassware
+    assert len(db_mod.get_subcategories(kitchen)) == 1
+
+
+def test_get_or_create_category_creates_when_the_name_is_new(db_mod):
+    kitchen = db_mod.create_category("Kitchen")
+    cookware = db_mod.get_or_create_category("Cookware", parent_id=kitchen)
+
+    assert db_mod.get_category(cookware)["parent_id"] == kitchen
+
+
+def test_get_or_create_category_is_idempotent_at_top_level(db_mod):
+    a = db_mod.get_or_create_category("Kitchen")
+    b = db_mod.get_or_create_category("Kitchen")
+    assert a == b
+    assert len(db_mod.get_top_level_categories()) == 1
+
+
+def test_get_or_create_category_only_matches_the_same_parent(db_mod):
+    kitchen = db_mod.create_category("Kitchen")
+    library = db_mod.create_category("Library")
+    kitchen_shelves = db_mod.create_category("Shelves", parent_id=kitchen)
+
+    assert db_mod.get_or_create_category("Shelves", parent_id=library) != kitchen_shelves
+    assert db_mod.get_or_create_category("Shelves") != kitchen_shelves
+
+
+def test_get_or_create_category_still_rejects_a_blank_name(db_mod):
+    with pytest.raises(ValueError):
+        db_mod.get_or_create_category("   ", parent_id=None)
+
+
+def test_get_or_create_category_still_rejects_an_unknown_parent(db_mod):
+    # Get-or-create must not paper over a parent that does not exist.
+    with pytest.raises(ValueError) as excinfo:
+        db_mod.get_or_create_category("Ghost", parent_id=9999)
+    assert "9999" in str(excinfo.value)
+
+
+def test_uncategorised_items_are_the_ones_with_no_category(db_mod):
+    kitchen = db_mod.create_category("Kitchen")
+    db_mod.create_item("Whisk", category_id=kitchen)
+    db_mod.create_item("Spare key", category_id=None)
+
+    assert [row["name"] for row in db_mod.get_uncategorised_items()] == ["Spare key"]
+    assert db_mod.uncategorised_item_count() == 1
+
+
 def test_get_or_create_location_is_idempotent(db_mod):
     a = db_mod.get_or_create_location("Cupboard")
     b = db_mod.get_or_create_location("Cupboard")

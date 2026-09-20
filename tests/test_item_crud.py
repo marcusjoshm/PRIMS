@@ -10,6 +10,8 @@ The form routes are CSRF-protected, so every POST here goes through
 what a browser does. Rejection of a *missing* token is covered in
 tests/test_csrf.py.
 """
+import pytest
+
 from conftest import post_form
 
 
@@ -59,6 +61,15 @@ def test_add_form_lists_every_category_including_top_level(client):
     assert f'value="{kitchen}"' in body
     assert f'value="{glassware}"' in body
     assert "Glassware" in body
+
+
+def test_category_pickers_empty_option_says_no_category(client):
+    # Leaving the picker alone stores no category at all; it does not put the
+    # item "at top level", which would mean attaching it to a top-level
+    # collection. The label has to say the thing the code does.
+    body = _html(client.get("/item/new"))
+    assert "top level" not in body.lower()
+    assert "No category" in body
 
 
 def test_add_form_prefills_the_category_it_was_opened_from(client):
@@ -224,6 +235,69 @@ def test_add_with_a_negative_quantity_returns_a_validation_error(client):
     assert db.get_all_items() == []
 
 
+def test_add_with_a_quantity_too_large_to_store_is_rejected_not_a_500(client):
+    # SQLite's INTEGER stops at 2**63 - 1; a bigger number raised OverflowError
+    # inside the INSERT, which surfaced as a 500 rather than a form error.
+    db = _db()
+    kitchen, _ = _kitchen_tree()
+
+    resp = post_form(
+        client,
+        "/item/new",
+        data={"name": "Mug", "category_id": str(kitchen), "quantity": "9" * 20},
+    )
+    assert resp.status_code == 400
+    assert "quantity" in _html(resp).lower()
+    assert db.get_all_items() == []
+
+
+def test_add_with_the_largest_storable_quantity_still_saves(client):
+    # The bound rejects what SQLite cannot store, and nothing short of it.
+    db = _db()
+    kitchen, _ = _kitchen_tree()
+
+    post_form(
+        client,
+        "/item/new",
+        data={"name": "Rice", "category_id": str(kitchen), "quantity": str(2**63 - 1)},
+        follow_redirects=True,
+    )
+    assert db.get_items_in_category(kitchen)[0]["quantity"] == 2**63 - 1
+
+
+def test_quantity_input_declares_the_storable_maximum(client):
+    body = _html(client.get("/item/new"))
+    assert f'max="{2**63 - 1}"' in body
+
+
+def test_a_failed_item_write_leaves_no_inline_category_behind(client, monkeypatch):
+    # Validation failures never created the category, but an error thrown
+    # *inside* the item write stranded the category the same request had just
+    # made: the item was lost and the half-made category survived.
+    import app as app_module
+
+    db = _db()
+    kitchen, _ = _kitchen_tree()
+
+    def boom(**kwargs):
+        raise RuntimeError("the write failed")
+
+    monkeypatch.setattr(app_module.db, "create_item", boom)
+
+    with pytest.raises(RuntimeError):
+        post_form(
+            client,
+            "/item/new",
+            data={
+                "name": "Stock pot",
+                "category_id": str(kitchen),
+                "new_category": "Cookware",
+            },
+        )
+
+    assert [row["name"] for row in db.get_subcategories(kitchen)] == ["Glassware"]
+
+
 def test_add_with_an_unknown_category_is_rejected_not_a_500(client):
     # PRAGMA foreign_keys = ON would otherwise raise IntegrityError -> 500.
     db = _db()
@@ -236,10 +310,13 @@ def test_add_with_an_unknown_category_is_rejected_not_a_500(client):
     assert db.get_all_items() == []
 
 
-def test_add_with_a_duplicate_inline_category_name_shows_the_error(client):
-    # create_category raises ValueError for a duplicate under the same parent.
+def test_add_with_an_existing_inline_category_name_reuses_that_category(client):
+    # Typing a sub-category that already exists under the chosen parent is the
+    # owner saying "put it in that one". The field is get-or-create, like the
+    # Location field beside it: no duplicate, no second category, and above all
+    # no rejected save that loses everything typed.
     db = _db()
-    kitchen, _ = _kitchen_tree()
+    kitchen, glassware = _kitchen_tree()
 
     resp = post_form(
         client,
@@ -249,11 +326,40 @@ def test_add_with_a_duplicate_inline_category_name_shows_the_error(client):
             "category_id": str(kitchen),
             "new_category": "Glassware",
         },
+        follow_redirects=True,
     )
-    assert resp.status_code == 400
-    assert "already exists" in _html(resp)
-    assert db.get_all_items() == []
+    assert resp.status_code == 200
     assert len(db.get_subcategories(kitchen)) == 1
+    assert [row["name"] for row in db.get_items_in_category(glassware)] == ["Tumbler"]
+
+
+def test_reusing_an_existing_inline_category_does_not_delete_it_on_a_failed_write(
+    client, monkeypatch
+):
+    # The undo that removes a *newly created* inline category must not touch a
+    # pre-existing one the submission merely reused.
+    import app as app_module
+
+    db = _db()
+    kitchen, glassware = _kitchen_tree()
+
+    def boom(**kwargs):
+        raise RuntimeError("the write failed")
+
+    monkeypatch.setattr(app_module.db, "create_item", boom)
+
+    with pytest.raises(RuntimeError):
+        post_form(
+            client,
+            "/item/new",
+            data={
+                "name": "Tumbler",
+                "category_id": str(kitchen),
+                "new_category": "Glassware",
+            },
+        )
+
+    assert db.get_category(glassware) is not None
 
 
 # --- Editing (R11 / AE3) ---------------------------------------------------

@@ -50,6 +50,46 @@ def test_home_with_no_collections_shows_empty_state(client):
     assert "empty-state" in _html(resp)
 
 
+def test_home_links_to_uncategorised_items_when_some_exist(client):
+    # An item with no category appears on no category page, so the home page
+    # is where it has to be reachable from.
+    db = _db()
+    db.create_item("Spare key", category_id=None)
+
+    assert "/uncategorised" in _html(client.get("/"))
+
+
+def test_home_hides_the_uncategorised_link_when_every_item_has_a_category(client):
+    db = _db()
+    kitchen = db.create_category("Kitchen")
+    db.create_item("Whisk", category_id=kitchen)
+
+    assert "/uncategorised" not in _html(client.get("/"))
+
+
+# --- Uncategorised items ---------------------------------------------------
+
+def test_uncategorised_page_lists_only_items_with_no_category(client):
+    db = _db()
+    kitchen = db.create_category("Kitchen")
+    db.create_item("Whisk", category_id=kitchen)
+    loose = db.create_item("Spare key", category_id=None, quantity=2)
+
+    resp = client.get("/uncategorised")
+    body = _html(resp)
+    assert resp.status_code == 200
+    assert "Spare key" in body
+    assert f'href="/item/{loose}"' in body
+    assert 'class="entry-list"' in body
+    assert "Whisk" not in body
+
+
+def test_uncategorised_page_with_nothing_to_show_renders_empty_state(client):
+    resp = client.get("/uncategorised")
+    assert resp.status_code == 200
+    assert "empty-state" in _html(resp)
+
+
 # --- Category (R7 / AE1) ---------------------------------------------------
 
 def test_category_shows_subcategories_and_loose_items_together(client):

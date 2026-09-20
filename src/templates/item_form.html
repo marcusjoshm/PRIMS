@@ -13,12 +13,16 @@
     <input type="text" id="name" name="name" value="{{ values.name }}" required autofocus>
 
     <label for="quantity">Quantity</label>
-    <input type="number" id="quantity" name="quantity" min="0" step="1"
+    {# max is SQLite's largest storable INTEGER: anything above it cannot be
+       written at all, so the form says so rather than failing on save. #}
+    <input type="number" id="quantity" name="quantity" min="0" max="{{ MAX_QUANTITY }}" step="1"
            value="{{ values.quantity }}" placeholder="0" inputmode="numeric">
 
     <label for="category_id">Category</label>
     <select id="category_id" name="category_id">
-      <option value=""{% if not values.category_id %} selected{% endif %}>— None (top level) —</option>
+      {# Empty means no category at all -- not "top level", which would mean a
+         top-level collection. Such items are listed at /uncategorised. #}
+      <option value=""{% if not values.category_id %} selected{% endif %}>— No category —</option>
       {% for choice in categories %}
         <option value="{{ choice.id }}"{% if values.category_id == choice.id|string %} selected{% endif %}>{{ choice.label }}</option>
       {% endfor %}

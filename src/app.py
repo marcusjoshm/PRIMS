@@ -81,10 +81,27 @@ def _with_item_counts(rows):
 
 @app.route('/')
 def home():
-    """Top-level collections as tiles, each with a subtree-wide item count (R6)."""
+    """Top-level collections as tiles, each with a subtree-wide item count (R6).
+
+    Items saved with no category belong to no collection, so they get a link of
+    their own -- shown only when there are some, so the page stays just the
+    tiles for someone who never saves one.
+    """
     return render_template(
-        'home.html', collections=_with_item_counts(db.get_top_level_categories())
+        'home.html',
+        collections=_with_item_counts(db.get_top_level_categories()),
+        uncategorised_count=db.uncategorised_item_count(),
     )
+
+
+@app.route('/uncategorised')
+def uncategorised_page():
+    """Items with no category, which appear on no category page (KD2).
+
+    The category picker allows "no category", so these items are real; without
+    this list they would be reachable only by search or a direct URL.
+    """
+    return render_template('uncategorised.html', items=db.get_uncategorised_items())
 
 
 @app.route('/category/<int:category_id>')
@@ -184,40 +201,61 @@ def _submitted_item_form():
     return {key: request.form.get(key, '').strip() for key in BLANK_ITEM_FORM}
 
 
+# SQLite stores an INTEGER in 64 bits, so a larger number cannot be written at
+# all: the driver raises OverflowError from inside the INSERT. Rejecting it up
+# front turns that 500 into an ordinary form error.
+MAX_QUANTITY = 2 ** 63 - 1
+app.jinja_env.globals['MAX_QUANTITY'] = MAX_QUANTITY
+
+
 def _resolve_item_form(values):
     """Turn submitted strings into db arguments, or return a message to show.
 
-    Returns ``(fields, error)`` with exactly one of them set. Everything that
-    can be rejected is checked before the inline category is created, so a
-    form that fails validation leaves no half-made category behind. A category
+    Returns ``(fields, created_category_id, error)``: either ``fields`` or
+    ``error`` is set, never both. Every rejectable value is checked before the
+    inline category is created, so a form that fails validation leaves no
+    half-made category behind. Validation is not the only way to lose the item,
+    though, so when a category *is* created here ``created_category_id`` names
+    it -- and only it, never a category that was merely reused -- for
+    _save_item_form to remove if the item write itself then fails. A category
     id that no longer exists is caught here rather than surfacing as the
     sqlite3.IntegrityError that PRAGMA foreign_keys would otherwise raise.
     """
     if not values['name']:
-        return None, 'Item name is required.'
+        return None, None, 'Item name is required.'
 
     try:
         quantity = int(values['quantity'] or 0)
     except ValueError:
-        return None, 'Quantity must be a whole number.'
+        return None, None, 'Quantity must be a whole number.'
     if quantity < 0:
-        return None, 'Quantity cannot be negative.'
+        return None, None, 'Quantity cannot be negative.'
+    if quantity > MAX_QUANTITY:
+        return None, None, f'Quantity cannot be larger than {MAX_QUANTITY}.'
 
     parent_id = None
     if values['category_id']:
         try:
             parent_id = int(values['category_id'])
         except ValueError:
-            return None, 'Choose a category from the list.'
+            return None, None, 'Choose a category from the list.'
         if db.get_category(parent_id) is None:
-            return None, 'That category no longer exists — choose another.'
+            return None, None, 'That category no longer exists — choose another.'
 
     category_id = parent_id
+    created_category_id = None
     if values['new_category']:
+        # Get-or-create, like the Location field beside it: a name already in
+        # use under this parent means that category, not a rejected save. Only
+        # a category this submission actually made is ours to undo, so the
+        # lookup happens first -- an existing one must survive a failed write.
+        existing = db.get_category_by_name(values['new_category'], parent_id)
         try:
-            category_id = db.create_category(values['new_category'], parent_id)
+            category_id = db.get_or_create_category(values['new_category'], parent_id)
         except ValueError as exc:
-            return None, str(exc)
+            return None, None, str(exc)
+        if existing is None:
+            created_category_id = category_id
 
     return {
         'name': values['name'],
@@ -225,7 +263,26 @@ def _resolve_item_form(values):
         'location_id': db.get_or_create_location(values['location']),
         'quantity': quantity,
         'notes': values['notes'],
-    }, None
+    }, created_category_id, None
+
+
+def _save_item_form(values, save):
+    """Resolve the form and write the item, as one all-or-nothing step.
+
+    ``save`` receives the resolved fields and does the actual db write. If it
+    raises, a category this same submission created inline is removed again:
+    the item is not saved, so the category it was invented for must not
+    outlive it. Returns ``(result_of_save, error)``.
+    """
+    fields, created_category_id, error = _resolve_item_form(values)
+    if error:
+        return None, error
+    try:
+        return save(fields), None
+    except Exception:
+        if created_category_id is not None:
+            db.delete_category(created_category_id)
+        raise
 
 
 def _render_item_form(values, heading, action, submit_label, status=200):
@@ -244,14 +301,13 @@ def new_item():
     """Add an item, picking a category or creating one inline (R10/AE4, F3)."""
     if request.method == 'POST':
         values = _submitted_item_form()
-        fields, error = _resolve_item_form(values)
+        item_id, error = _save_item_form(values, lambda fields: db.create_item(**fields))
         if error:
             flash(error)
             return _render_item_form(
                 values, 'Add item', url_for('new_item'), 'Save item', status=400
             )
-        item_id = db.create_item(**fields)
-        flash(f"Added {fields['name']}.")
+        flash(f"Added {values['name']}.")
         return redirect(url_for('item_page', item_id=item_id))
 
     values = dict(BLANK_ITEM_FORM)
@@ -270,14 +326,15 @@ def edit_item(item_id):
 
     if request.method == 'POST':
         values = _submitted_item_form()
-        fields, error = _resolve_item_form(values)
+        _, error = _save_item_form(
+            values, lambda fields: db.update_item(item_id, **fields)
+        )
         if error:
             flash(error)
             return _render_item_form(
                 values, 'Edit item', action, 'Save changes', status=400
             )
-        db.update_item(item_id, **fields)
-        flash(f"Saved {fields['name']}.")
+        flash(f"Saved {values['name']}.")
         return redirect(url_for('item_page', item_id=item_id))
 
     location = db.get_location(item['location_id'])

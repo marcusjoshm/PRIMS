@@ -169,6 +169,47 @@ def create_category(name, parent_id=None):
         conn.close()
 
 
+def get_category_by_name(name, parent_id=None):
+    """The category with this name under this parent, or None.
+
+    The NULL-parent case needs ``IS NULL`` rather than ``= ?``, the same split
+    create_category makes, because SQLite matches nothing with ``= NULL``.
+    """
+    name = (name or "").strip()
+    if not name:
+        return None
+    conn = get_conn()
+    try:
+        if parent_id is None:
+            return conn.execute(
+                "SELECT * FROM categories WHERE parent_id IS NULL AND name = ?",
+                (name,),
+            ).fetchone()
+        return conn.execute(
+            "SELECT * FROM categories WHERE parent_id = ? AND name = ?",
+            (parent_id, name),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def get_or_create_category(name, parent_id=None):
+    """Return the id for a category name under this parent, creating it if new.
+
+    The sibling of get_or_create_location, for the form's inline
+    "New sub-category" field: re-typing a name that is already there means
+    "file it under that one", not an error that throws the submission away.
+
+    It gets or creates; it does not forgive. A blank name and an unknown
+    parent_id still raise, exactly as create_category raises them -- neither is
+    a category this could hand back.
+    """
+    existing = get_category_by_name(name, parent_id)
+    if existing is not None:
+        return existing["id"]
+    return create_category(name, parent_id)
+
+
 def get_category(category_id):
     conn = get_conn()
     try:
@@ -353,6 +394,8 @@ def create_item(name, category_id, location_id=None, quantity=0, notes=""):
             )
         except sqlite3.IntegrityError as exc:
             raise ValueError("Unknown category or location id") from exc
+        except OverflowError as exc:
+            raise ValueError("Quantity is too large to store") from exc
         conn.commit()
         return cur.lastrowid
     finally:
@@ -380,6 +423,33 @@ def get_items_in_category(category_id):
         conn.close()
 
 
+def get_uncategorised_items():
+    """Items filed under no category at all.
+
+    ``category_id`` is nullable, so an item can exist outside the tree. Such an
+    item shows up on no category page, which is why it needs a list of its own.
+    """
+    conn = get_conn()
+    try:
+        return conn.execute(
+            "SELECT * FROM inventory WHERE category_id IS NULL ORDER BY name"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def uncategorised_item_count():
+    """How many items have no category -- for deciding whether to link the list."""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM inventory WHERE category_id IS NULL"
+        ).fetchone()
+        return row["n"]
+    finally:
+        conn.close()
+
+
 def get_all_items():
     conn = get_conn()
     try:
@@ -402,6 +472,8 @@ def update_item(item_id, name, category_id, location_id, quantity, notes):
             )
         except sqlite3.IntegrityError as exc:
             raise ValueError("Unknown category or location id") from exc
+        except OverflowError as exc:
+            raise ValueError("Quantity is too large to store") from exc
         conn.commit()
     finally:
         conn.close()

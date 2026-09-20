@@ -80,3 +80,27 @@ def test_delete_unused_location_still_succeeds(client):
     response = client.delete(f'/locations/{cupboard}')
     assert response.status_code == 200
     assert db.get_location(cupboard) is None
+
+
+def test_create_item_with_an_unstorable_quantity_is_a_400(client):
+    # The web form bounds quantity before writing, but the JSON API passes it
+    # straight through: SQLite raises OverflowError past 2**63 - 1, which
+    # escaped as a 500 until create_item translated it.
+    db = _db()
+    kitchen = db.create_category('Kitchen')
+    response = client.post(
+        '/inventory',
+        json={'name': 'Boom', 'category_id': kitchen, 'quantity': 2 ** 63},
+    )
+    assert response.status_code == 400
+    assert 'error' in response.get_json()
+    assert db.get_all_items() == []
+
+
+def test_update_item_with_an_unstorable_quantity_is_a_400(client):
+    db = _db()
+    kitchen = db.create_category('Kitchen')
+    item = db.create_item('Pint glass', category_id=kitchen, quantity=6)
+    response = client.put(f'/inventory/{item}', json={'quantity': 2 ** 63})
+    assert response.status_code == 400
+    assert db.get_item(item)['quantity'] == 6

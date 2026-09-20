@@ -69,6 +69,7 @@ bash tests/test_crud_operations.sh   # curl smoke test, needs the app running
 | --- | --- |
 | `/` | Top-level collections, with an entry point to add an item |
 | `/category/<id>` | A category's sub-categories and its own items |
+| `/uncategorised` | Items saved with no category (linked from `/` when any exist) |
 | `/item/<id>` | One item's name, quantity, location, category, and notes |
 | `/search?q=` | Items matching a term in their name or notes |
 | `/item/new`, `/item/<id>/edit`, `/item/<id>/delete` | Add, edit, remove |

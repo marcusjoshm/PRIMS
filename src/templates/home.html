@@ -12,4 +12,12 @@
   {% else %}
     <p class="empty-state">No collections yet.</p>
   {% endif %}
+
+  {# Items saved with no category are in no collection, so only this link
+     reaches them by browsing. Hidden when there are none. #}
+  {% if uncategorised_count %}
+    <p class="section-label">
+      <a href="{{ url_for('uncategorised_page') }}">Uncategorised ({{ uncategorised_count }})</a>
+    </p>
+  {% endif %}
 {% endblock %}

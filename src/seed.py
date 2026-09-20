@@ -16,7 +16,8 @@ Run it from the repository root::
 This is destructive: per KTD4 there is no migration framework, so seeding drops
 and recreates the schema in whatever database ``db.DB_PATH`` points at. Seeding
 an empty or absent database happens silently; seeding over existing items asks
-for confirmation first unless ``--force``/``--yes`` is given.
+for confirmation first unless ``--force``/``--yes`` is given. A database that
+cannot be read at all is refused outright rather than guessed at as empty.
 
 Every write goes through the ``db`` data layer -- this script hand-writes no SQL.
 """
@@ -221,11 +222,18 @@ def existing_item_count():
 
     An absent file or a database without the PRIMS schema counts as empty: there
     is nothing to lose, so seeding it needs no confirmation.
+
+    Every other failure -- a locked database, a corrupt file, a permissions
+    problem -- re-raises instead. A count that cannot be taken is not a count of
+    zero, and this guard stands between real inventory and reset_db(): reporting
+    "empty" for a database nobody could read would wipe it without asking.
     """
     try:
         return len(db.get_all_items())
-    except sqlite3.OperationalError:
-        return 0
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return 0
+        raise
 
 
 def _confirm(item_count):
@@ -253,7 +261,16 @@ def main(argv=None):
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     if not args.force:
-        existing = existing_item_count()
+        try:
+            existing = existing_item_count()
+        except sqlite3.DatabaseError as exc:
+            # Unreadable is not empty. Refuse rather than reach reset_db().
+            print(f"Cannot read {db.DB_PATH}: {exc}", file=sys.stderr)
+            print(
+                "Not seeding: refusing to wipe a database this script cannot read.",
+                file=sys.stderr,
+            )
+            return 2
         if existing and not _confirm(existing):
             print("Aborted; nothing was changed.")
             return 1

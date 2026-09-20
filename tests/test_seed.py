@@ -10,6 +10,8 @@ Every test drives ``seed.seed()`` (or ``seed.main()`` with an explicit argv)
 directly against the throwaway DB the fixtures create -- nothing here may block
 on stdin, and nothing may touch the real prims.db.
 """
+import sqlite3
+
 import pytest
 
 
@@ -287,6 +289,82 @@ def test_declined_prompt_reports_why_nothing_happened(db_mod, monkeypatch, capsy
 
     _seed_mod().main([])
     assert "Aborted" in capsys.readouterr().out
+
+
+# --- The guard must fail CLOSED --------------------------------------------
+
+def _unreadable(monkeypatch, exc):
+    """Make the item count fail the way a locked or corrupt database would."""
+    import db
+
+    def _raise(*args, **kwargs):
+        raise exc
+
+    monkeypatch.setattr(db, "get_all_items", _raise)
+
+
+def test_count_treats_a_missing_table_as_empty(db_mod, monkeypatch):
+    # A database without the PRIMS schema genuinely has nothing to lose.
+    _unreadable(monkeypatch, sqlite3.OperationalError("no such table: inventory"))
+
+    assert _seed_mod().existing_item_count() == 0
+
+
+def test_count_refuses_to_report_zero_for_an_unreadable_database(db_mod, monkeypatch):
+    # A count that cannot be taken is not a count of zero.
+    _unreadable(monkeypatch, sqlite3.OperationalError("database is locked"))
+
+    with pytest.raises(sqlite3.OperationalError):
+        _seed_mod().existing_item_count()
+
+
+def test_main_refuses_to_seed_a_database_it_cannot_read(db_mod, monkeypatch):
+    # The guard fails closed: an unreadable DB is never treated as empty, and
+    # the prompt is never reached, so nothing can fall through to reset_db().
+    garage = db_mod.create_category("Garage")
+    db_mod.create_item("Snow shovel", category_id=garage, quantity=1)
+    _no_prompt(monkeypatch)
+    _unreadable(monkeypatch, sqlite3.OperationalError("database is locked"))
+
+    assert _seed_mod().main([]) != 0
+
+
+def test_refusing_an_unreadable_database_leaves_it_untouched(db_mod, monkeypatch):
+    garage = db_mod.create_category("Garage")
+    db_mod.create_item("Snow shovel", category_id=garage, quantity=1)
+    _no_prompt(monkeypatch)
+    _unreadable(monkeypatch, sqlite3.OperationalError("database is locked"))
+
+    _seed_mod().main([])
+
+    monkeypatch.undo()
+    assert _top("Garage") is not None
+    assert [r["name"] for r in db_mod.get_all_items()] == ["Snow shovel"]
+
+
+def test_refusal_says_what_went_wrong(db_mod, monkeypatch, capsys):
+    _no_prompt(monkeypatch)
+    _unreadable(monkeypatch, sqlite3.OperationalError("database is locked"))
+
+    _seed_mod().main([])
+
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "database is locked" in output
+    assert "seed" in output.lower()
+
+
+def test_main_refuses_when_the_target_is_not_a_sqlite_database(tmp_path, monkeypatch):
+    # PRIMS_DB pointed at the wrong file must refuse cleanly, not traceback.
+    import db
+
+    target = tmp_path / "notes.txt"
+    target.write_bytes(b"this is not a database, it is a shopping list\n")
+    db.DB_PATH = str(target)
+    _no_prompt(monkeypatch)
+
+    assert _seed_mod().main([]) != 0
+    assert target.read_bytes().startswith(b"this is not a database")
 
 
 def test_seed_targets_whatever_db_path_currently_points_at(tmp_path):

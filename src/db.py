@@ -6,9 +6,10 @@ the seed script share one implementation (KTD5). Rows come back as
 
 Schema (KTD2/KTD3/KTD4):
   categories  id, name, parent_id -> categories.id (NULL = top-level collection)
-              UNIQUE(parent_id, name); top-level NULL-parent uniqueness is
-              enforced in create_category()/update_category() because SQLite
-              treats NULLs as distinct in a UNIQUE constraint.
+              unique on (parent_id, name) via CATEGORY_NAME_INDEX; top-level
+              NULL-parent uniqueness is enforced in create_category()/
+              update_category() because SQLite treats NULLs as distinct in a
+              UNIQUE index.
   locations   id, name UNIQUE
   inventory   id, name, category_id, location_id, quantity, notes
 """
@@ -32,16 +33,54 @@ def get_conn():
     return conn
 
 
+# The (parent_id, name) uniqueness lives in an index rather than in the CREATE
+# TABLE, because ALTER TABLE cannot add a table-level UNIQUE constraint to the
+# pre-existing categories table of an older prims.db. One mechanism, so a fresh
+# database and an upgraded one enforce exactly the same rule.
+CATEGORY_NAME_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS categories_parent_name "
+    "ON categories (parent_id, name)"
+)
+
+
+def _column_names(conn, table):
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _add_missing_columns(conn):
+    """Add columns an older prims.db predates. The whole migration story.
+
+    ``CREATE TABLE IF NOT EXISTS`` is a no-op against a table that already
+    exists, so a database written before ``categories.parent_id`` and
+    ``inventory.notes`` existed would keep its old columns and fail every read
+    that names them. Both additions are nullable or defaulted, so SQLite adds
+    them to a populated table without disturbing a single row: existing
+    categories become top-level collections (parent_id NULL) and existing items
+    get empty notes. There is no migration framework by design (KTD4) -- this
+    is it, and re-running it is a no-op.
+    """
+    if "parent_id" not in _column_names(conn, "categories"):
+        conn.execute(
+            "ALTER TABLE categories "
+            "ADD COLUMN parent_id INTEGER REFERENCES categories(id)"
+        )
+    if "notes" not in _column_names(conn, "inventory"):
+        conn.execute("ALTER TABLE inventory ADD COLUMN notes TEXT DEFAULT ''")
+
+
 def init_db():
-    """Create tables if they do not exist. Does not alter an existing DB."""
+    """Create the schema, and give an older database the columns it lacks.
+
+    Safe to run against a fresh file, a current database, or one built by code
+    that predates nested categories and item notes. Nothing is ever dropped.
+    """
     conn = get_conn()
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            parent_id INTEGER REFERENCES categories(id),
-            UNIQUE (parent_id, name)
+            parent_id INTEGER REFERENCES categories(id)
         );
         CREATE TABLE IF NOT EXISTS locations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,16 +96,18 @@ def init_db():
         );
         """
     )
+    _add_missing_columns(conn)
+    conn.execute(CATEGORY_NAME_INDEX)
     conn.commit()
     conn.close()
 
 
 def reset_db():
-    """Drop and recreate the schema.
+    """Drop and recreate the schema, discarding everything in it.
 
-    CREATE TABLE IF NOT EXISTS will not add new columns to a pre-existing
-    prims.db, so a schema change (or the seed script, per KTD4) must rebuild
-    from scratch. The DB is single-user, git-ignored test data.
+    Only the seed script (KTD4) and the tests want this. Upgrading an older
+    database no longer requires it: init_db() adds missing columns in place.
+    The DB is single-user, git-ignored test data.
     """
     conn = get_conn()
     conn.executescript(
@@ -246,10 +287,10 @@ def update_category(category_id, name):
     """Rename a category, rejecting a name already taken by a sibling.
 
     The same two checks create_category makes: the NULL-parent case in Python
-    (SQLite treats NULLs as distinct), the rest via UNIQUE(parent_id, name),
-    whose IntegrityError is translated so callers see one correctable error
-    type. Both exclude the row being renamed, so renaming it to its own name
-    is a no-op rather than a conflict.
+    (SQLite treats NULLs as distinct), the rest via the unique (parent_id,
+    name) index, whose IntegrityError is translated so callers see one
+    correctable error type. Both exclude the row being renamed, so renaming it
+    to its own name is a no-op rather than a conflict.
     """
     name = (name or "").strip()
     if not name:

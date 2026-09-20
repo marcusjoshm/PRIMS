@@ -28,7 +28,48 @@ def allowed_file(filename):
 
 @app.route('/')
 def home():
-    return render_template('home.html')
+    """Top-level collections as tiles, each with a subtree-wide item count (R6)."""
+    collections = [
+        {'row': row, 'count': db.category_item_count(row['id'])}
+        for row in db.get_top_level_categories()
+    ]
+    return render_template('home.html', collections=collections)
+
+
+@app.route('/category/<int:category_id>')
+def category_page(category_id):
+    """A category's sub-categories and its directly-attached items (R7/AE1)."""
+    category = db.get_category(category_id)
+    if category is None:
+        abort(404)
+    subcategories = [
+        {'row': row, 'count': db.category_item_count(row['id'])}
+        for row in db.get_subcategories(category_id)
+    ]
+    return render_template(
+        'category.html',
+        category=category,
+        ancestors=db.get_ancestors(category_id),
+        subcategories=subcategories,
+        items=db.get_items_in_category(category_id),
+    )
+
+
+@app.route('/item/<int:item_id>')
+def item_page(item_id):
+    """One item: name, quantity, notes and location."""
+    item = db.get_item(item_id)
+    if item is None:
+        abort(404)
+    category = db.get_category(item['category_id']) if item['category_id'] else None
+    ancestors = db.get_ancestors(category['id']) if category else []
+    return render_template(
+        'item.html',
+        item=item,
+        category=category,
+        ancestors=ancestors,
+        location=db.get_location(item['location_id']),
+    )
 
 
 # ---------------------------------------------------------------------------

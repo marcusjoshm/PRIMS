@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ category['name'] }} · PRIMS{% endblock %}
+{% block content %}
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ url_for('home') }}">Collections</a>
+    {% for crumb in ancestors %}
+      /
+      {% if not loop.last %}
+        <a href="/category/{{ crumb['id'] }}">{{ crumb['name'] }}</a>
+      {% else %}
+        <span>{{ crumb['name'] }}</span>
+      {% endif %}
+    {% endfor %}
+  </nav>
+
+  <h1>{{ category['name'] }}</h1>
+
+  {% if subcategories %}
+    <section id="subcategories">
+      <h2 class="section-label">Sub-categories</h2>
+      <ul class="tiles">
+        {% for entry in subcategories %}
+          <li>
+            <a class="tile" href="/category/{{ entry.row['id'] }}">
+              <span class="tile-name">{{ entry.row['name'] }}</span><br>
+              <span class="tile-count">{{ entry.count }} item{{ '' if entry.count == 1 else 's' }}</span>
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {% if items %}
+    <section id="items">
+      <h2 class="section-label">Items</h2>
+      <ul class="entry-list">
+        {% for item in items %}
+          <li>
+            <a href="/item/{{ item['id'] }}">
+              <span>{{ item['name'] }}</span>
+              <span class="entry-meta">Qty {{ item['quantity'] }}</span>
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {% if not subcategories and not items %}
+    <p class="empty-state">Nothing in here yet.</p>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ item['name'] }} · PRIMS{% endblock %}
+{% block content %}
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="{{ url_for('home') }}">Collections</a>
+    {% for crumb in ancestors %}
+      / <a href="/category/{{ crumb['id'] }}">{{ crumb['name'] }}</a>
+    {% endfor %}
+  </nav>
+
+  <h1>{{ item['name'] }}</h1>
+
+  <dl class="detail-list">
+    <dt>Quantity</dt>
+    <dd>{{ item['quantity'] if item['quantity'] is not none else 0 }}</dd>
+
+    <dt>Location</dt>
+    <dd>{% if location %}{{ location['name'] }}{% else %}<span class="empty-state">Not recorded</span>{% endif %}</dd>
+
+    <dt>Category</dt>
+    <dd>
+      {% if category %}
+        <a href="/category/{{ category['id'] }}">{{ category['name'] }}</a>
+      {% else %}
+        <span class="empty-state">Uncategorised</span>
+      {% endif %}
+    </dd>
+
+    <dt>Notes</dt>
+    <dd>{% if item['notes'] %}{{ item['notes'] }}{% else %}<span class="empty-state">No notes</span>{% endif %}</dd>
+  </dl>
+
+  {# The edit/delete routes land in U5; paths are hardcoded so this page renders now. #}
+  <div class="detail-actions">
+    <a class="btn btn-secondary" href="/item/{{ item['id'] }}/edit">Edit</a>
+    <form action="/item/{{ item['id'] }}/delete" method="post"
+          onsubmit="return confirm('Delete this item?');">
+      <button class="btn btn-danger" type="submit">Delete</button>
+    </form>
+  </div>
+{% endblock %}

@@ -1,5 +1,20 @@
 {% extends "base.html" %}
+{% block title %}PRIMS{% endblock %}
 {% block content %}
-  <h1>PRIMS</h1>
-  <p>Personal Resource and Information Management System.</p>
+  <h1>Collections</h1>
+
+  {% if collections %}
+    <ul class="tiles">
+      {% for entry in collections %}
+        <li>
+          <a class="tile" href="/category/{{ entry.row['id'] }}">
+            <span class="tile-name">{{ entry.row['name'] }}</span><br>
+            <span class="tile-count">{{ entry.count }} item{{ '' if entry.count == 1 else 's' }}</span>
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty-state">No collections yet.</p>
+  {% endif %}
 {% endblock %}

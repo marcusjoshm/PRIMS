@@ -127,7 +127,31 @@ h1, h2 { line-height: 1.2; }
 .item-form .form-actions { margin-top: 1.5rem; display: flex; gap: 0.75rem; flex-wrap: wrap; }
 .field-error { color: #a4302a; margin-top: 0.5rem; }
 .breadcrumb { color: #666; font-size: 0.9rem; margin-bottom: 0.5rem; }
+.breadcrumb a { color: #35566b; }
 .detail-actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; flex-wrap: wrap; }
+.detail-actions form { margin: 0; }
+
+/* Item detail */
+.detail-list {
+  margin: 1rem 0;
+  padding: 0.25rem 1rem;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+}
+.detail-list dt {
+  margin-top: 0.9rem;
+  color: #555;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.detail-list dd {
+  margin: 0.15rem 0 0.9rem;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+.detail-list .empty-state { padding: 0; font-size: 1rem; }
 
 /* Wider screens */
 @media (min-width: 40rem) {

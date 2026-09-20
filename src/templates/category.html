@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tile_list %}
 {% block title %}{{ category['name'] }} · PRIMS{% endblock %}
 {% block content %}
   <nav class="breadcrumb" aria-label="Breadcrumb">
@@ -6,7 +7,7 @@
     {% for crumb in ancestors %}
       /
       {% if not loop.last %}
-        <a href="/category/{{ crumb['id'] }}">{{ crumb['name'] }}</a>
+        <a href="{{ url_for('category_page', category_id=crumb['id']) }}">{{ crumb['name'] }}</a>
       {% else %}
         <span>{{ crumb['name'] }}</span>
       {% endif %}
@@ -21,16 +22,7 @@
   {% if subcategories %}
     <section id="subcategories">
       <h2 class="section-label">Sub-categories</h2>
-      <ul class="tiles">
-        {% for entry in subcategories %}
-          <li>
-            <a class="tile" href="/category/{{ entry.row['id'] }}">
-              <span class="tile-name">{{ entry.row['name'] }}</span><br>
-              <span class="tile-count">{{ entry.count }} item{{ '' if entry.count == 1 else 's' }}</span>
-            </a>
-          </li>
-        {% endfor %}
-      </ul>
+      {{ tile_list(subcategories) }}
     </section>
   {% endif %}
 
@@ -40,7 +32,7 @@
       <ul class="entry-list">
         {% for item in items %}
           <li>
-            <a href="/item/{{ item['id'] }}">
+            <a href="{{ url_for('item_page', item_id=item['id']) }}">
               <span>{{ item['name'] }}</span>
               <span class="entry-meta">Qty {{ item['quantity'] }}</span>
             </a>

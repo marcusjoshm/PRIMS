@@ -12,7 +12,7 @@
     <ul class="entry-list">
       {% for entry in results %}
         <li>
-          <a href="/item/{{ entry.row['id'] }}">
+          <a href="{{ url_for('item_page', item_id=entry.row['id']) }}">
             <span>{{ entry.row['name'] }}</span>
             <span class="entry-meta">{{ entry.path or 'Uncategorised' }}</span>
           </a>

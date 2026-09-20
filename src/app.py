@@ -26,31 +26,34 @@ def allowed_file(filename):
 # Web pages
 # ---------------------------------------------------------------------------
 
+def _with_item_counts(rows):
+    """Pair each category row with its subtree-wide item count, for tile lists."""
+    return [{'row': row, 'count': db.category_item_count(row['id'])} for row in rows]
+
+
 @app.route('/')
 def home():
     """Top-level collections as tiles, each with a subtree-wide item count (R6)."""
-    collections = [
-        {'row': row, 'count': db.category_item_count(row['id'])}
-        for row in db.get_top_level_categories()
-    ]
-    return render_template('home.html', collections=collections)
+    return render_template(
+        'home.html', collections=_with_item_counts(db.get_top_level_categories())
+    )
 
 
 @app.route('/category/<int:category_id>')
 def category_page(category_id):
-    """A category's sub-categories and its directly-attached items (R7/AE1)."""
-    category = db.get_category(category_id)
-    if category is None:
+    """A category's sub-categories and its directly-attached items (R7/AE1).
+
+    get_ancestors() ends with this category, so it doubles as the existence
+    check -- an unknown id yields an empty chain.
+    """
+    ancestors = db.get_ancestors(category_id)
+    if not ancestors:
         abort(404)
-    subcategories = [
-        {'row': row, 'count': db.category_item_count(row['id'])}
-        for row in db.get_subcategories(category_id)
-    ]
     return render_template(
         'category.html',
-        category=category,
-        ancestors=db.get_ancestors(category_id),
-        subcategories=subcategories,
+        category=ancestors[-1],
+        ancestors=ancestors,
+        subcategories=_with_item_counts(db.get_subcategories(category_id)),
         items=db.get_items_in_category(category_id),
     )
 
@@ -80,12 +83,11 @@ def item_page(item_id):
     item = db.get_item(item_id)
     if item is None:
         abort(404)
-    category = db.get_category(item['category_id']) if item['category_id'] else None
-    ancestors = db.get_ancestors(category['id']) if category else []
+    ancestors = db.get_ancestors(item['category_id']) if item['category_id'] else []
     return render_template(
         'item.html',
         item=item,
-        category=category,
+        category=ancestors[-1] if ancestors else None,
         ancestors=ancestors,
         location=db.get_location(item['location_id']),
     )

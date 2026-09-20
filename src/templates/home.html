@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tile_list %}
 {% block title %}PRIMS{% endblock %}
 {% block content %}
   <div class="page-heading">
@@ -7,16 +8,7 @@
   </div>
 
   {% if collections %}
-    <ul class="tiles">
-      {% for entry in collections %}
-        <li>
-          <a class="tile" href="/category/{{ entry.row['id'] }}">
-            <span class="tile-name">{{ entry.row['name'] }}</span><br>
-            <span class="tile-count">{{ entry.count }} item{{ '' if entry.count == 1 else 's' }}</span>
-          </a>
-        </li>
-      {% endfor %}
-    </ul>
+    {{ tile_list(collections) }}
   {% else %}
     <p class="empty-state">No collections yet.</p>
   {% endif %}

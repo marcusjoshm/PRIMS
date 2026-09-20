@@ -192,15 +192,28 @@ def category_item_count(category_id):
 
 
 def get_ancestors(category_id):
-    """Return categories from the top-level root down to (and including) this one."""
-    chain = []
-    current = get_category(category_id)
-    while current is not None:
-        chain.append(current)
-        if current["parent_id"] is None:
-            break
-        current = get_category(current["parent_id"])
-    return list(reversed(chain))
+    """Return categories from the top-level root down to (and including) this one.
+
+    One recursive CTE rather than a query per level: the search page calls this
+    once per result, so walking the chain in Python opened a connection for
+    every ancestor of every hit. Returns [] for an unknown id.
+    """
+    conn = get_conn()
+    try:
+        return conn.execute(
+            """
+            WITH RECURSIVE chain(id, name, parent_id, depth) AS (
+                SELECT id, name, parent_id, 0 FROM categories WHERE id = ?
+                UNION ALL
+                SELECT c.id, c.name, c.parent_id, chain.depth + 1
+                FROM categories c JOIN chain ON c.id = chain.parent_id
+            )
+            SELECT id, name, parent_id FROM chain ORDER BY depth DESC
+            """,
+            (category_id,),
+        ).fetchall()
+    finally:
+        conn.close()
 
 
 def update_category(category_id, name):

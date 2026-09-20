@@ -4,7 +4,7 @@
   <nav class="breadcrumb" aria-label="Breadcrumb">
     <a href="{{ url_for('home') }}">Collections</a>
     {% for crumb in ancestors %}
-      / <a href="/category/{{ crumb['id'] }}">{{ crumb['name'] }}</a>
+      / <a href="{{ url_for('category_page', category_id=crumb['id']) }}">{{ crumb['name'] }}</a>
     {% endfor %}
   </nav>
 
@@ -20,7 +20,7 @@
     <dt>Category</dt>
     <dd>
       {% if category %}
-        <a href="/category/{{ category['id'] }}">{{ category['name'] }}</a>
+        <a href="{{ url_for('category_page', category_id=category['id']) }}">{{ category['name'] }}</a>
       {% else %}
         <span class="empty-state">Uncategorised</span>
       {% endif %}

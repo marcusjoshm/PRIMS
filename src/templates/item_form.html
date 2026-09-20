@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} · PRIMS{% endblock %}
+{% block content %}
+  <h1>{{ heading }}</h1>
+
+  {# One plain form POST, no JavaScript (KTD1). The category picker lists every
+     category because items may attach at any level (R3/KD2); naming a new
+     sub-category creates it under whatever is selected above (R10). #}
+  <form class="item-form" action="{{ action }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label for="name">Name</label>
+    <input type="text" id="name" name="name" value="{{ values.name }}" required autofocus>
+
+    <label for="quantity">Quantity</label>
+    {# max is SQLite's largest storable INTEGER: anything above it cannot be
+       written at all, so the form says so rather than failing on save. #}
+    <input type="number" id="quantity" name="quantity" min="0" max="{{ MAX_QUANTITY }}" step="1"
+           value="{{ values.quantity }}" placeholder="0" inputmode="numeric">
+
+    <label for="category_id">Category</label>
+    <select id="category_id" name="category_id">
+      {# Empty means no category at all -- not "top level", which would mean a
+         top-level collection. Such items are listed at /uncategorised. #}
+      <option value=""{% if not values.category_id %} selected{% endif %}>— No category —</option>
+      {% for choice in categories %}
+        <option value="{{ choice.id }}"{% if values.category_id == choice.id|string %} selected{% endif %}>{{ choice.label }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="new_category">New sub-category <span class="field-hint">(optional — created under the category above)</span></label>
+    <input type="text" id="new_category" name="new_category" value="{{ values.new_category }}"
+           placeholder="e.g. Cookware">
+
+    <label for="location">Location</label>
+    <input type="text" id="location" name="location" value="{{ values.location }}"
+           placeholder="e.g. Top shelf">
+
+    <label for="notes">Notes</label>
+    <textarea id="notes" name="notes" rows="3">{{ values.notes }}</textarea>
+
+    <div class="form-actions">
+      <button class="btn" type="submit">{{ submit_label }}</button>
+      <a class="btn btn-secondary" href="{{ url_for('home') }}">Cancel</a>
+    </div>
+  </form>
+{% endblock %}
